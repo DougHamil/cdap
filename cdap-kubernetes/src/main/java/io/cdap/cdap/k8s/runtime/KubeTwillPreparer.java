@@ -697,11 +697,11 @@ class KubeTwillPreparer implements TwillPreparer, StatefulTwillPreparer {
     volumeMounts.addAll(Arrays.asList(extraMounts));
 
     // Setup the container environment. Inherit everything from the current pod.
-    Map<String, String> environs = podInfo.getContainerEnvironments().stream()
-      .filter(envVar -> envVar.getValue() != null)
-      .collect(Collectors.toMap(V1EnvVar::getName, V1EnvVar::getValue));
-    // Add all environments for the runnable
-    environs.putAll(environments.get(runnableName));
+    Map<String, V1EnvVar> environs = new HashMap<>();
+    podInfo.getContainerEnvironments().forEach(envVar -> environs.put(envVar.getName(), envVar));
+    environments.get(runnableName).forEach((name, value) -> {
+      environs.put(name, new V1EnvVar().name(name).value(value));
+    });
 
     V1PodSpecBuilder podSpecBuilder = new V1PodSpecBuilder();
     if (schedulerQueue != null) {
@@ -728,19 +728,16 @@ class KubeTwillPreparer implements TwillPreparer, StatefulTwillPreparer {
   private V1Container createContainer(String name, String containerImage, String workDir,
                                       V1ResourceRequirements resourceRequirements,
                                       List<V1VolumeMount> volumeMounts,
-                                      Map<String, String> environments,
+                                      Map<String, V1EnvVar> environments,
                                       Class<? extends MasterEnvironmentRunnable> runnableClass, String... args) {
-    Map<String, String> environs = new HashMap<>(environments);
+    Map<String, V1EnvVar> environs = new HashMap<>(environments);
 
     // Set the environments for controlling the working directory
-    environs.put("CDAP_LOCAL_DIR", workDir);
-    environs.put("CDAP_TEMP_DIR", "tmp");
+    environs.put("CDAP_LOCAL_DIR", new V1EnvVar().name("CDAP_LOCAL_DIR").value(workDir));
+    environs.put("CDAP_TEMP_DIR", new V1EnvVar().name("CDAP_TEMP_DIR").value("tmp"));
 
     // Set the process memory is through the JAVA_HEAPMAX variable.
-    environs.put("JAVA_HEAPMAX", String.format("-Xmx%dm", computeMaxHeapSize(resourceRequirements)));
-    List<V1EnvVar> containerEnvironments = environs.entrySet().stream()
-      .map(e -> new V1EnvVar().name(e.getKey()).value(e.getValue()))
-      .collect(Collectors.toList());
+    environs.put("JAVA_HEAPMAX", new V1EnvVar().name("JAVA_HEAPMAX").value(String.format("-Xmx%dm", computeMaxHeapSize(resourceRequirements))));
 
     return new V1ContainerBuilder()
       .withName(cleanse(name, 254))
@@ -748,7 +745,7 @@ class KubeTwillPreparer implements TwillPreparer, StatefulTwillPreparer {
       .withWorkingDir(workDir)
       .withResources(resourceRequirements)
       .addAllToVolumeMounts(volumeMounts)
-      .addAllToEnv(containerEnvironments)
+      .addAllToEnv(environs.values())
       .addToArgs(masterEnvContext.getRunnableArguments(runnableClass, args))
       .build();
   }
